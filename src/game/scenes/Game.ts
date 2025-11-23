@@ -32,8 +32,7 @@ export class Game extends Scene {
         this.camera.setBackgroundColor(0x00ff00);
 
         // Create animated water background
-        this.waterBackground = this.add.sprite(320, 440, 'water_anim_0');
-        this.waterBackground.setDisplaySize(this.gameWidth, this.gameHeight);
+        this.waterBackground = this.add.sprite(320, 240, 'water_anim_0');
         this.waterBackground.setDepth(-1); // Behind everything else
 
         // Create water animation frames from individual images
@@ -58,6 +57,9 @@ export class Game extends Scene {
         this.player = this.physics.add.sprite(this.playerStartX, this.playerStartY, 'frog');
         this.player.setCollideWorldBounds(true);
         this.player.setDepth(10); // Above everything
+
+        // Set fixed collision box size (32x32)
+        this.player.body.setSize(32, 32);
 
 
         // Player animations
@@ -208,7 +210,28 @@ export class Game extends Scene {
 
 
     handlePlayerCarCollision(player: any, car: any) {
+        // Get player position before resetting
+        const corpseX = this.player.x;
+        const corpseY = this.player.y;
+
+        // Reset player
         this.resetPlayer();
+
+        // Create corpse sprite at the collision position using frame 6 from frog spritesheet
+        const corpse = this.add.sprite(corpseX, corpseY, 'frog', 6);
+        corpse.setDepth(4); // Above cars but below player
+        corpse.setOrigin(0.5, 0.5); // Center the sprite
+
+        // Fade out the corpse over 2 seconds
+        this.tweens.add({
+            targets: corpse,
+            alpha: 0,
+            duration: 2000,
+            ease: 'Linear',
+            onComplete: () => {
+                corpse.destroy();
+            }
+        });
     }
 
     resetPlayer() {
