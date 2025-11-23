@@ -28,7 +28,18 @@ export class Preloader extends Scene {
         //  Load the assets for the game - Replace with your own assets
         this.load.setPath('assets');
 
-        this.load.image('bg_game', 'bg_game.png');
+        this.load.image('bg_game', 'bg_game2.png');
+
+        // Load all car images (car_1 through car_10)
+        for (let i = 1; i <= 10; i++) {
+            this.load.image(`car_${i}`, `car_${i}.png`);
+        }
+
+        // Load water animation images (water_anim_0 through water_anim_9)
+        for (let i = 0; i <= 9; i++) {
+            this.load.image(`water_anim_${i}`, `water_anim_${i}.jpg`);
+        }
+
         this.load.spritesheet('frog',
             'frog.png',
             { frameWidth: 50, frameHeight: 72 }

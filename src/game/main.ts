@@ -10,12 +10,9 @@ import { Preloader } from './scenes/Preloader.ts';
 const config: Phaser.Types.Core.GameConfig = {
     type: AUTO,
     width: 640,
-    height: 880,
+    height: 840,
     physics: {
         default: 'arcade',
-        arcade: {
-            debug: false
-        }
     },
     parent: 'game-container',
     backgroundColor: '#028af8',
