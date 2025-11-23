@@ -1,4 +1,5 @@
 import { Scene } from 'phaser';
+import { architect } from 'neataptic'
 
 interface LaneConfig {
     y: number;
@@ -22,12 +23,14 @@ export class Game extends Scene {
     gameHeight: number = 880;
     playerStartX: number = 320;
     playerStartY: number = 780;
+    myNetwork: any;
 
     constructor() {
         super('Game');
     }
 
     create() {
+        this.myNetwork = architect.Perceptron(8, 6, 4)
         this.camera = this.cameras.main;
         this.camera.setBackgroundColor(0x00ff00);
 
@@ -315,7 +318,21 @@ export class Game extends Scene {
         // Update cars
         this.updateCars(time, delta);
 
-        if (this.cursor.left.isDown) {
+        const [left, right, up, down] = this.myNetwork.activate([0, 0, 0, 0, 0, 0, 0, 0]) as [number, number, number, number]
+        if (left >= 0.5) {
+            this.t({ x: "-=40" }, -90)
+        }
+        else if (right >= 0.5) {
+            this.t({ x: "+=40" }, 90)
+        }
+        else if (up >= 0.5) {
+            this.t({ y: "-=40" }, 0)
+        }
+        else if (down >= 0.5) {
+            this.t({ y: "+=40" }, 180)
+        }
+
+        /*if (this.cursor.left.isDown) {
             this.t({ x: "-=40" }, -90)
         }
         else if (this.cursor.right.isDown) {
@@ -326,6 +343,6 @@ export class Game extends Scene {
         }
         else if (this.cursor.down.isDown) {
             this.t({ y: "+=40" }, 180)
-        }
+        }*/
     }
 }
