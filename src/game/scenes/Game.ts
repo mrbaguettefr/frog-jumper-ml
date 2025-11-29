@@ -13,6 +13,10 @@ import {
     SENSOR_DISTANCE,
     FROG_HIT_BOX_X,
     FROG_HIT_BOX_Y,
+    MUTATION_LOWER_BOUND,
+    MUTATION_UPPER_BOUND,
+    FROG_JUMP_DISTANCE,
+    FROG_JUMP_SPEED,
 } from "../constants";
 
 import type { SynapticNetworkJSONFormat } from "../../../types";
@@ -45,7 +49,6 @@ export class Game extends Scene {
     gameWidth: number = 640;
     gameHeight: number = 880;
     lastResetTimer: number;
-    lastBestFrogIndex: number = 0;
     sensorGraphics!: Phaser.GameObjects.Graphics;
     brainGraphics!: Phaser.GameObjects.Graphics;
     brainLabels: Phaser.GameObjects.Text[] = [];
@@ -90,7 +93,7 @@ export class Game extends Scene {
             // Set fixed collision box size (32x32)
             sprite.body.setSize(FROG_HIT_BOX_X, FROG_HIT_BOX_Y);
 
-            const brain = new Architect.Perceptron(5, 10, 3);
+            const brain = new Architect.Perceptron(8, 10, 4);
             brain.setOptimize(false);
 
             const playerContext: FrogContext = {
@@ -150,19 +153,19 @@ export class Game extends Scene {
         this.lanes = [
             {
                 y: startY,
-                speed: 150, // pixels per second
+                speed: 100, // pixels per second
                 direction: "right", // left to right
                 spawnRate: 2000, // spawn every 2 seconds
-                maxCars: 2,
+                maxCars: 3,
                 cars: [],
                 spawnTimer: 0,
             },
             {
                 y: startY + laneSpacing,
-                speed: 200,
+                speed: 40,
                 direction: "left", // right to left
-                spawnRate: 4000, // spawn every 1.5 seconds
-                maxCars: 1,
+                spawnRate: 5000, // spawn every 1.5 seconds
+                maxCars: 5,
                 cars: [],
                 spawnTimer: 0,
             },
@@ -177,19 +180,19 @@ export class Game extends Scene {
             },
             {
                 y: startY + laneSpacing * 3,
-                speed: 120,
+                speed: 80,
                 direction: "left", // right to left
-                spawnRate: 1800, // spawn every 1.8 seconds
+                spawnRate: 2000, // spawn every 1.8 seconds
                 maxCars: 2,
                 cars: [],
                 spawnTimer: 0,
             },
             {
                 y: startY + laneSpacing * 4,
-                speed: 120,
+                speed: 60,
                 direction: "right", // right to left
-                spawnRate: 2800, // spawn every 1.8 seconds
-                maxCars: 2,
+                spawnRate: 3600, // spawn every 1.8 seconds
+                maxCars: 3,
                 cars: [],
                 spawnTimer: 0,
             },
@@ -262,6 +265,8 @@ export class Game extends Scene {
         const corpseX = player.x;
         const corpseY = player.y;
 
+        this.sound.play("spash");
+
         // Reset player
         this.killFrog(player);
 
@@ -314,12 +319,30 @@ export class Game extends Scene {
         const brainsWithFitness = this.frogs.map((frog) => ({
             brain: frog.brain,
             fitness: this.computeFitness(frog),
+            successful: frog.sprite.y <= GOAL_LINE_Y,
         }));
 
-        brainsWithFitness.sort((a, b) => b.fitness - a.fitness);
+        const [successfullBrains, loosers] = brainsWithFitness.reduce<{ brain: Network; fitness: number; successful: boolean }[][]>(
+            (acc, bf) => {
+                (bf.successful ? acc[0] : acc[1]).push(bf);
+                return acc;
+            },
+            [[], []],
+        );
 
-        const bestBrainsWithFitness = brainsWithFitness.slice(0, TOP_WINNERS_COUNT);
-        //console.log("Selecting ", bestBrainsWithFitness.length, "winners");
+        loosers.sort((a, b) => b.fitness - a.fitness);
+
+        const bestLoosersBrainsWithFitness = loosers.slice(0, Math.max(0, TOP_WINNERS_COUNT - successfullBrains.length));
+        const bestBrainsWithFitness = successfullBrains.concat(bestLoosersBrainsWithFitness);
+        console.log(
+            "Selecting",
+            bestBrainsWithFitness.length,
+            "best from",
+            successfullBrains.length,
+            "successfulls and",
+            loosers.length,
+            "loosers",
+        );
         //bestBrainsWithFitness.forEach((winner, winnerIndex) => console.log(winnerIndex, "fitness:", winner.fitness, "sprite.y:", winner.));
         const bestBrains = bestBrainsWithFitness.map((bf) => bf.brain);
         const offsprings: Network[] = [];
@@ -394,12 +417,13 @@ export class Game extends Scene {
     }
     mutate(gene: number) {
         if (Math.random() < MUTATE_RATE) {
-            const mutateFactor = 1 + ((Math.random() - 0.5) * 3 + Math.random() - 0.5);
-            const newGene = gene * mutateFactor;
-            //console.log("mutate! mutateFactor:", mutateFactor, "gene:", gene, "newGene:", newGene);
+            //https://www.datacamp.com/tutorial/genetic-algorithm-python
+            const mutateFactor = Phaser.Math.RND.normal();
+            //const mutateFactor = 1 + ((Math.random() - 0.5) * 3 + Math.random() - 0.5);
+            const newGene = Math.max(Math.min(gene + mutateFactor, MUTATION_UPPER_BOUND), MUTATION_LOWER_BOUND);
+            // console.log("mutate! mutateFactor:", mutateFactor, "gene:", gene, "newGene:", newGene);
             return newGene;
         }
-
         return gene;
     }
 
@@ -487,36 +511,17 @@ export class Game extends Scene {
     }
 
     resetGame() {
-        let totalFitness = 0;
-        let bestFitness = -Infinity;
-        let bestBrainJSON: SynapticNetworkJSONFormat | null = null;
-        for (let i = 0; i < MAX_FROGS; i++) {
-            const frogContext = this.frogs[i];
-            const fitness = this.computeFitness(frogContext);
-            totalFitness += fitness;
-            if (fitness > bestFitness) {
-                bestFitness = fitness;
-                bestBrainJSON = frogContext.brain.toJSON();
-            }
-        }
-        if (bestBrainJSON) {
-            this.bestBrainJSON = bestBrainJSON;
-            this.renderBrainGraph(bestBrainJSON);
-        }
+        let totalFitness = this.frogs.reduce((acc, frog) => acc + this.computeFitness(frog), 0);
         for (let i = 0; i < MAX_FROGS; i++) {
             const frogContext = this.frogs[i];
             if (frogContext.alive) {
-                /* if (playerContext.movement) {
-                    playerContext.movement.stop()
-                    playerContext.movement = null
-                } */
                 frogContext.sprite.destroy();
             }
         }
         const brains = this.evolveBrains();
+        this.renderBrainGraph(brains[0].toJSON());
         console.assert(brains.length === this.frogs.length);
         console.log("Total fitness=", totalFitness, ", mean fitness: ", totalFitness / MAX_FROGS);
-        this.lastBestFrogIndex = 0;
         this.sensorGraphics.clear();
         for (let i = 0; i < MAX_FROGS; i++) {
             const frogContext = this.frogs[i];
@@ -605,7 +610,7 @@ export class Game extends Scene {
         playerContext.movement = this.tweens.add({
             targets: playerContext.sprite,
             ease: "Cubic", // 'Cubic', 'Elastic', 'Bounce', 'Back'
-            duration: 300,
+            duration: FROG_JUMP_SPEED,
             ...props,
             onStart: function () {
                 playerContext.sprite.anims.play("move", true);
@@ -625,6 +630,9 @@ export class Game extends Scene {
             { x: SENSOR_DISTANCE, y: 0 }, // 2: East
             { x: -SENSOR_DISTANCE, y: 0 }, // 6: West
             { x: -diagonalOffset, y: -diagonalOffset }, // 7: Northwest
+            { x: 0, y: SENSOR_DISTANCE }, // 0: South
+            { x: diagonalOffset, y: diagonalOffset }, // 1: Northeast
+            { x: -diagonalOffset, y: diagonalOffset }, // 7: Northwest
         ];
     }
 
@@ -694,7 +702,7 @@ export class Game extends Scene {
     }
 
     update(time: number, delta: number): void {
-        if (time > this.lastResetTimer + RESET_TIMER) {
+        if (time > this.lastResetTimer + RESET_TIMER || this.frogs.every((frog) => !frog.alive)) {
             this.resetGame();
             this.lastResetTimer = time;
         }
@@ -705,29 +713,32 @@ export class Game extends Scene {
         if (time < 3000) return;
 
         for (let i = 0; i < MAX_FROGS; i++) {
-            const playerContext = this.frogs[i];
-            if (!playerContext.alive || playerContext.sprite.y <= GOAL_LINE_Y) continue;
-            if (playerContext.movement && playerContext.movement.isActive()) {
+            const frogContext = this.frogs[i];
+            if (!frogContext.alive || frogContext.sprite.y <= GOAL_LINE_Y) continue;
+            if (frogContext.movement && frogContext.movement.isActive()) {
                 return;
             }
 
             // Get sensor inputs (8 sensors detecting cars around player)
-            const { sensorValues, sensorPositions } = this.getSensorData(playerContext);
-            console.assert(sensorValues.length == 5);
-            const [left, right, up /*, down*/] = playerContext.brain.activate(sensorValues);
-            if (i === this.lastBestFrogIndex) {
-                this.renderSensorsForBestFrog(playerContext, sensorPositions, sensorValues, time);
+            const { sensorValues, sensorPositions } = this.getSensorData(frogContext);
+            console.assert(sensorValues.length == 8);
+            const [left, right, up, down] = frogContext.brain.activate(sensorValues);
+            console.assert(left >= 0 && left <= 1);
+            console.assert(right >= 0 && right <= 1);
+            console.assert(up >= 0 && up <= 1);
+            if (i === 0) {
+                this.renderSensorsForBestFrog(frogContext, sensorPositions, sensorValues, time);
             }
             //console.log(i, sensorInputs)
             if (left >= 0.5) {
-                this.jumpPlayer(playerContext, { x: "-=40" }, -90);
+                this.jumpPlayer(frogContext, { x: "-=" + FROG_JUMP_DISTANCE }, -90);
             } else if (right >= 0.5) {
-                this.jumpPlayer(playerContext, { x: "+=40" }, 90);
+                this.jumpPlayer(frogContext, { x: "+=" + FROG_JUMP_DISTANCE }, 90);
             } else if (up >= 0.5) {
-                this.jumpPlayer(playerContext, { y: "-=40" }, 0);
-            } /*else if (down >= 0.5) {
-                this.jumpPlayer(playerContext, { y: "+=40" }, 180);
-            } */
+                this.jumpPlayer(frogContext, { y: "-=" + FROG_JUMP_DISTANCE }, 0);
+            } else if (down >= 0.5) {
+                this.jumpPlayer(frogContext, { y: "+=" + FROG_JUMP_DISTANCE }, 180);
+            }
         }
 
         /*if (this.cursor.left.isDown) {

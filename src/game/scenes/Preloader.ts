@@ -29,6 +29,7 @@ export class Preloader extends Scene {
         this.load.setPath('assets');
 
         this.load.image('bg_game', 'bg_game2.png');
+        this.load.audio('spash', 'spash.mp3');
 
         // Load all car images (car_1 through car_10)
         for (let i = 1; i <= 10; i++) {
