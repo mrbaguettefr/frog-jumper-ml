@@ -10,6 +10,9 @@ import {
     PLAYER_START_X,
     PLAYER_START_Y,
     DISTANCE_TO_TRAVEL,
+    SENSOR_DISTANCE,
+    FROG_HIT_BOX_X,
+    FROG_HIT_BOX_Y,
 } from "../constants";
 
 import type { SynapticNetworkJSONFormat } from "../../../types";
@@ -42,6 +45,11 @@ export class Game extends Scene {
     gameWidth: number = 640;
     gameHeight: number = 880;
     lastResetTimer: number;
+    lastBestFrogIndex: number = 0;
+    sensorGraphics!: Phaser.GameObjects.Graphics;
+    brainGraphics!: Phaser.GameObjects.Graphics;
+    brainLabels: Phaser.GameObjects.Text[] = [];
+    bestBrainJSON: SynapticNetworkJSONFormat | null = null;
     constructor() {
         super("Game");
     }
@@ -80,7 +88,7 @@ export class Game extends Scene {
             sprite.setCollideWorldBounds(true);
             sprite.setDepth(10); // Above everything
             // Set fixed collision box size (32x32)
-            sprite.body.setSize(32, 32);
+            sprite.body.setSize(FROG_HIT_BOX_X, FROG_HIT_BOX_Y);
 
             const brain = new Architect.Perceptron(5, 10, 3);
             brain.setOptimize(false);
@@ -111,6 +119,10 @@ export class Game extends Scene {
         });
 
         this.cursor = this.input.keyboard!.createCursorKeys();
+        this.sensorGraphics = this.add.graphics();
+        this.sensorGraphics.setDepth(20);
+        this.brainGraphics = this.add.graphics();
+        this.brainGraphics.setDepth(25);
 
         // Initialize car lanes
         this.initCarLanes();
@@ -391,7 +403,102 @@ export class Game extends Scene {
         return gene;
     }
 
+    clearBrainGraph() {
+        this.brainGraphics.clear();
+        this.brainLabels.forEach((label) => label.destroy());
+        this.brainLabels = [];
+    }
+
+    renderBrainGraph(bestBrainJSON: SynapticNetworkJSONFormat | null) {
+        this.clearBrainGraph();
+        if (!bestBrainJSON) {
+            return;
+        }
+
+        const layers: { [key: string]: number[] } = {};
+        bestBrainJSON.neurons.forEach((neuron, index) => {
+            const layerKey = `${neuron.layer}`;
+            layers[layerKey] = layers[layerKey] || [];
+            layers[layerKey].push(index);
+        });
+
+        const orderedLayerKeys = [
+            "input",
+            ...Object.keys(layers)
+                .filter((key) => key !== "input" && key !== "output")
+                .sort((a, b) => Number(a) - Number(b)),
+            "output",
+        ].filter((key) => layers[key]);
+
+        const positions = new Map<number, { x: number; y: number }>();
+        const graphOffsetX = 40;
+        const graphOffsetY = 40;
+        const layerSpacing = 140;
+        const graphHeight = 320;
+
+        orderedLayerKeys.forEach((layerKey, layerIndex) => {
+            const neuronIndices = layers[layerKey];
+            const spacingY = graphHeight / (neuronIndices.length + 1);
+            neuronIndices.forEach((neuronIndex, indexInLayer) => {
+                const x = graphOffsetX + layerIndex * layerSpacing;
+                const y = graphOffsetY + spacingY * (indexInLayer + 1);
+                positions.set(neuronIndex, { x, y });
+
+                const bias = bestBrainJSON.neurons[neuronIndex].bias;
+                this.brainGraphics.fillStyle(0x1a1a1a, 0.9);
+                this.brainGraphics.fillCircle(x, y, 12);
+                this.brainGraphics.lineStyle(1, 0xffffff, 0.8);
+                this.brainGraphics.strokeCircle(x, y, 12);
+
+                const biasLabel = this.add.text(x, y, bias.toFixed(2), { fontSize: "10px", color: "#ffffff" }).setOrigin(0.5);
+                biasLabel.setDepth(30);
+                this.brainLabels.push(biasLabel);
+            });
+        });
+
+        bestBrainJSON.connections.forEach((connection) => {
+            const fromPos = positions.get(connection.from);
+            const toPos = positions.get(connection.to);
+            if (!fromPos || !toPos) {
+                return;
+            }
+            const weight = connection.weight;
+            const weightAbs = Math.abs(weight);
+            const color = weight >= 0 ? 0x00cc99 : 0xff3366;
+            const thickness = Phaser.Math.Clamp(1 + weightAbs * 2, 1, 4);
+            const alpha = Phaser.Math.Clamp(0.4 + weightAbs * 0.6, 0.4, 1);
+
+            this.brainGraphics.lineStyle(thickness, color, alpha);
+            this.brainGraphics.beginPath();
+            this.brainGraphics.moveTo(fromPos.x, fromPos.y);
+            this.brainGraphics.lineTo(toPos.x, toPos.y);
+            this.brainGraphics.strokePath();
+
+            const midX = (fromPos.x + toPos.x) / 2;
+            const midY = (fromPos.y + toPos.y) / 2;
+            const weightLabel = this.add.text(midX, midY, weight.toFixed(2), { fontSize: "9px", color: "#ffffff" }).setOrigin(0.5);
+            weightLabel.setDepth(30);
+            this.brainLabels.push(weightLabel);
+        });
+    }
+
     resetGame() {
+        let totalFitness = 0;
+        let bestFitness = -Infinity;
+        let bestBrainJSON: SynapticNetworkJSONFormat | null = null;
+        for (let i = 0; i < MAX_FROGS; i++) {
+            const frogContext = this.frogs[i];
+            const fitness = this.computeFitness(frogContext);
+            totalFitness += fitness;
+            if (fitness > bestFitness) {
+                bestFitness = fitness;
+                bestBrainJSON = frogContext.brain.toJSON();
+            }
+        }
+        if (bestBrainJSON) {
+            this.bestBrainJSON = bestBrainJSON;
+            this.renderBrainGraph(bestBrainJSON);
+        }
         for (let i = 0; i < MAX_FROGS; i++) {
             const frogContext = this.frogs[i];
             if (frogContext.alive) {
@@ -402,11 +509,10 @@ export class Game extends Scene {
                 frogContext.sprite.destroy();
             }
         }
-        const totalFitness = this.frogs.reduce((acc, cur) => {
-            return acc + this.computeFitness(cur);
-        }, 0);
         const brains = this.evolveBrains();
         console.log("Total fitness=", totalFitness, ", mean fitness: ", totalFitness / MAX_FROGS);
+        this.lastBestFrogIndex = 0;
+        this.sensorGraphics.clear();
         for (let i = 0; i < MAX_FROGS; i++) {
             const frogContext = this.frogs[i];
 
@@ -416,7 +522,7 @@ export class Game extends Scene {
             sprite.setCollideWorldBounds(true);
             sprite.setDepth(10); // Above everything
             // Set fixed collision box size (32x32)
-            sprite.body.setSize(32, 32);
+            sprite.body.setSize(FROG_HIT_BOX_X, FROG_HIT_BOX_Y);
             frogContext.sprite = sprite;
             // Set up overlap detection for the new frog
             this.lanes.forEach((lane, laneIndex) => {
@@ -505,35 +611,29 @@ export class Game extends Scene {
         });
     }
 
-    /**
-     * Get sensor inputs for a player. Returns 8 values (0 or 1) representing
-     * car detection at 8 positions around the player (cardinal + diagonal).
-     * Each sensor is at approximately 32px distance from the player.
-     * Order: N, NE, E, SE, S, SW, W, NW
-     */
-    getSensorInputs(playerContext: FrogContext): number[] {
-        const playerX = playerContext.sprite.x;
-        const playerY = playerContext.sprite.y;
-        const sensorDistance = 32;
-        const diagonalOffset = sensorDistance * Math.cos(Math.PI / 4); // ~22.6px for 45 degrees
+    getSensorOffsets() {
+        const diagonalOffset = SENSOR_DISTANCE; //* Math.cos(Math.PI / 4); // ~22.6px for 45 degrees
 
-        // Define 8 sensor positions relative to player
-        const sensorPositions = [
-            { x: 0, y: -sensorDistance }, // 0: North
+        return [
+            { x: 0, y: -SENSOR_DISTANCE }, // 0: North
             { x: diagonalOffset, y: -diagonalOffset }, // 1: Northeast
-            { x: sensorDistance, y: 0 }, // 2: East
-            /*            { x: diagonalOffset, y: diagonalOffset }, // 3: Southeast
-            { x: 0, y: sensorDistance }, // 4: South
-            { x: -diagonalOffset, y: diagonalOffset }, // 5: Southwest */
-            { x: -sensorDistance, y: 0 }, // 6: West
+            { x: SENSOR_DISTANCE, y: 0 }, // 2: East
+            { x: -SENSOR_DISTANCE, y: 0 }, // 6: West
             { x: -diagonalOffset, y: -diagonalOffset }, // 7: Northwest
         ];
+    }
 
+    getSensorData(playerContext: FrogContext) {
+        const playerX = playerContext.sprite.x;
+        const playerY = playerContext.sprite.y;
         const sensorValues: number[] = [];
+        const sensorPositions: { x: number; y: number }[] = [];
+        const sensorOffsets = this.getSensorOffsets();
 
-        for (const sensorPos of sensorPositions) {
+        for (const sensorPos of sensorOffsets) {
             const sensorX = playerX + sensorPos.x;
             const sensorY = playerY + sensorPos.y;
+            sensorPositions.push({ x: sensorX, y: sensorY });
             let carDetected = 0;
 
             // Check all cars in all lanes using Phaser's hitTest method
@@ -551,10 +651,48 @@ export class Game extends Scene {
             sensorValues.push(carDetected);
         }
 
+        return { sensorValues, sensorPositions };
+    }
+
+    /**
+     * Get sensor inputs for a player. Returns 5 values (0 or 1) representing
+     * car detection around the player (N, NE, E, W, NW) about 32px away.
+     */
+    getSensorInputs(playerContext: FrogContext): number[] {
+        const { sensorValues } = this.getSensorData(playerContext);
         return sensorValues;
     }
 
+    renderSensorsForBestFrog(
+        playerContext: FrogContext,
+        sensorPositions: { x: number; y: number }[],
+        sensorValues: number[],
+        time: number,
+    ) {
+        if (!playerContext.alive) {
+            this.sensorGraphics.clear();
+            return;
+        }
+
+        this.sensorGraphics.clear();
+
+        for (let i = 0; i < sensorPositions.length; i++) {
+            const sensorActive = sensorValues[i] === 1;
+            const color = sensorActive ? 0xff0000 : 0x00ff00;
+
+            this.sensorGraphics.lineStyle(2, color, 0.9);
+            this.sensorGraphics.beginPath();
+            this.sensorGraphics.moveTo(playerContext.sprite.x, playerContext.sprite.y);
+            this.sensorGraphics.lineTo(sensorPositions[i].x, sensorPositions[i].y);
+            this.sensorGraphics.strokePath();
+        }
+    }
+
     update(time: number, delta: number): void {
+        const bestFrog = this.frogs[this.lastBestFrogIndex];
+        if (!bestFrog || !bestFrog.alive || bestFrog.sprite.y <= GOAL_LINE_Y) {
+            this.sensorGraphics.clear();
+        }
         if (time > this.lastResetTimer + RESET_TIMER) {
             this.resetGame();
             this.lastResetTimer = time;
@@ -573,9 +711,12 @@ export class Game extends Scene {
             }
 
             // Get sensor inputs (8 sensors detecting cars around player)
-            const sensorInputs = this.getSensorInputs(playerContext);
-            console.assert(sensorInputs.length == 5);
-            const [left, right, up /*, down*/] = playerContext.brain.activate(sensorInputs);
+            const { sensorValues, sensorPositions } = this.getSensorData(playerContext);
+            console.assert(sensorValues.length == 5);
+            const [left, right, up /*, down*/] = playerContext.brain.activate(sensorValues);
+            if (i === this.lastBestFrogIndex) {
+                this.renderSensorsForBestFrog(playerContext, sensorPositions, sensorValues, time);
+            }
             //console.log(i, sensorInputs)
             if (left >= 0.5) {
                 this.jumpPlayer(playerContext, { x: "-=40" }, -90);
