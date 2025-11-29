@@ -11,10 +11,10 @@ import {
     PLAYER_START_Y,
     DISTANCE_TO_TRAVEL,
 } from "../constants";
-import { SensorLane, computeSensorInputs } from "../sensors";
+
 import type { SynapticNetworkJSONFormat } from "../../../types";
 
-export interface LaneConfig extends SensorLane {
+export interface LaneConfig {
     y: number;
     speed: number;
     direction: "left" | "right";
