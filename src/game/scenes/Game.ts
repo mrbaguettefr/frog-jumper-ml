@@ -384,7 +384,7 @@ export class Game extends Scene {
         if (Math.random() < MUTATE_RATE) {
             const mutateFactor = 1 + ((Math.random() - 0.5) * 3 + Math.random() - 0.5);
             const newGene = gene * mutateFactor;
-            console.log("mutate! mutateFactor:", mutateFactor, "gene:", gene, "newGene:", newGene);
+            //console.log("mutate! mutateFactor:", mutateFactor, "gene:", gene, "newGene:", newGene);
             return newGene;
         }
 
