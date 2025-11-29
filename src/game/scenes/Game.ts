@@ -7,6 +7,7 @@ import {
   TOP_WINNERS_COUNT,
 } from "../constants";
 import { SensorLane, computeSensorInputs } from "../sensors";
+import type { SynapticNetworkJSONFormat } from "../../../types";
 
 export interface LaneConfig extends SensorLane {
   y: number;
@@ -24,18 +25,6 @@ export interface FrogContext {
   movement: Phaser.Tweens.Tween | null;
   brain: Network;
 }
-export interface SynapticConnectionJSONFormat {
-  weight: number;
-}
-
-export interface SynapticNeuronJSONFormat {
-  bias: number;
-}
-
-export interface SynapticNetworkJSONFormat {
-  neurons: SynapticNeuronJSONFormat[];
-  connections: SynapticConnectionJSONFormat[];
-}
 export class Game extends Scene {
   camera!: Phaser.Cameras.Scene2D.Camera;
   background!: Phaser.GameObjects.Image;
@@ -43,7 +32,6 @@ export class Game extends Scene {
   msg_text!: Phaser.GameObjects.Text;
   cursor!: Phaser.Types.Input.Keyboard.CursorKeys;
   frogs!: FrogContext[];
-  numPlayers: number = 4;
   lanes!: LaneConfig[];
   gameWidth: number = 640;
   gameHeight: number = 880;
@@ -83,7 +71,7 @@ export class Game extends Scene {
     this.background.setDepth(0); // Above water but below game objects
     //this.background.setAlpha(0);
     this.frogs = [];
-    for (let i = 0; i < this.numPlayers; i++) {
+    for (let i = 0; i < MAX_FROGS; i++) {
       const sprite = this.physics.add.sprite(
         this.playerStartX,
         this.playerStartY,
@@ -250,7 +238,7 @@ export class Game extends Scene {
     lane.cars.push(car);
 
     // Set up overlap detection for the new car
-    for (let i = 0; i < this.numPlayers; i++) {
+    for (let i = 0; i < MAX_FROGS; i++) {
       if (!this.frogs[i].alive) continue;
 
       this.physics.add.overlap(
@@ -325,10 +313,9 @@ export class Game extends Scene {
     for (let i = winners.length; i < MAX_FROGS; i++) {
       let offspring;
 
-      if (i < winners.length + TOP_WINNERS_COUNT) {
-        // if within topUnits + count, crossover between parents
-        const parentA = winners[0].brain.toJSON() as SynapticNetworkJSONFormat;
-        const parentB = winners[1].brain.toJSON() as SynapticNetworkJSONFormat;
+      if (i == winners.length) {
+        const parentA = winners[0].brain.toJSON();
+        const parentB = winners[1].brain.toJSON();
         offspring = this.crossOver(parentA, parentB);
       } else if (i < MAX_FROGS - CROSSOVER_WINNER_COUNT) {
         // if within maxUnits - count, crossover between two random winners
@@ -351,8 +338,8 @@ export class Game extends Scene {
     //this.brains.sort((a, b) => a.index - b.index);
   }
 
-  computeFitness(playerContext: FrogContext) {
-    return -playerContext.sprite.y;
+  computeFitness(frogContext: FrogContext) {
+    return -frogContext.sprite.y;
   }
 
   selection() {
@@ -361,7 +348,7 @@ export class Game extends Scene {
       (a, b) => this.computeFitness(b) - this.computeFitness(a),
     );
 
-    return sortedFrogs.slice(0, 6);
+    return sortedFrogs.slice(0, TOP_WINNERS_COUNT);
   }
 
   crossOver(
@@ -400,15 +387,16 @@ export class Game extends Scene {
   }
 
   resetGame() {
-    for (let i = 0; i < this.numPlayers; i++) {
-      const playerContext = this.frogs[i];
-      console.log(this.computeFitness(playerContext));
-      if (playerContext.alive) {
+    this.evolveBrains();
+    for (let i = 0; i < MAX_FROGS; i++) {
+      const frogContext = this.frogs[i];
+      console.log(this.computeFitness(frogContext));
+      if (frogContext.alive) {
         /* if (playerContext.movement) {
                     playerContext.movement.stop()
                     playerContext.movement = null
                 } */
-        playerContext.sprite.destroy();
+        frogContext.sprite.destroy();
       }
       const sprite = this.physics.add.sprite(
         this.playerStartX,
@@ -419,9 +407,9 @@ export class Game extends Scene {
       sprite.setDepth(10); // Above everything
       // Set fixed collision box size (32x32)
       sprite.body.setSize(32, 32);
-      playerContext.sprite = sprite;
-      playerContext.alive = true;
-      this.frogs[i] = playerContext;
+      frogContext.sprite = sprite;
+      frogContext.alive = true;
+      this.frogs[i] = frogContext;
       sprite.setData("context", this.frogs[i]);
     }
   }
@@ -566,7 +554,7 @@ export class Game extends Scene {
 
     if (time < 3000) return;
 
-    for (let i = 0; i < this.numPlayers; i++) {
+    for (let i = 0; i < MAX_FROGS; i++) {
       const playerContext = this.frogs[i];
       if (!playerContext.alive) continue;
       if (playerContext.movement && playerContext.movement.isActive()) {
