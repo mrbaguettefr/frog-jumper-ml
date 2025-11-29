@@ -3,11 +3,14 @@ import { Architect, Network } from "synaptic";
 import {
   CROSSOVER_WINNER_COUNT,
   MAX_FROGS,
+  MAX_Y as GOAL_LINE_Y,
   MUTATE_RATE,
+  RESET_TIMER,
   TOP_WINNERS_COUNT,
 } from "../constants";
 import { SensorLane, computeSensorInputs } from "../sensors";
 import type { SynapticNetworkJSONFormat } from "../../../types";
+import { log } from "console";
 
 export interface LaneConfig extends SensorLane {
   y: number;
@@ -21,6 +24,7 @@ export interface LaneConfig extends SensorLane {
 
 export interface FrogContext {
   alive: boolean;
+  timeOfdeath?: number;
   sprite: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
   movement: Phaser.Tweens.Tween | null;
   brain: Network;
@@ -257,7 +261,7 @@ export class Game extends Scene {
     const corpseY = player.y;
 
     // Reset player
-    this.killPlayer(player);
+    this.killFrog(player);
 
     // Create corpse sprite at the collision position using frame 6 from frog spritesheet
     const corpse = this.add.sprite(corpseX, corpseY, "frog", 6);
@@ -275,21 +279,21 @@ export class Game extends Scene {
       },
     });
   }
-  getRandomBrain(winners: FrogContext[]) {
+  getRandomBrain(winners: Network[]) {
     const randomWinner = Phaser.Utils.Array.GetRandom(winners);
-    return randomWinner.brain;
+    return randomWinner;
   }
 
-  getRandomProbBrain(array: FrogContext[]) {
+  getRandomProbBrain(array: { brain: Network; fitness: number }[]) {
     // https://natureofcode.com/book/chapter-9-the-evolution-of-code/#95-the-genetic-algorithm-part-ii-selection
     const totalFitness = array.reduce((acc, cur) => {
-      return acc + this.computeFitness(cur);
+      return acc + cur.fitness;
     }, 0);
 
     const normalizedWinners = array.map((winner) => {
       return {
         brain: winner,
-        prob: this.computeFitness(winner) / totalFitness,
+        prob: winner.fitness / totalFitness,
       };
     });
 
@@ -305,50 +309,78 @@ export class Game extends Scene {
     return normalizedWinners[0].brain;
   }
   evolveBrains() {
-    const winners = this.selection();
+    const brainsWithFitness = this.frogs.map((frog) => ({
+      brain: frog.brain,
+      fitness: this.computeFitness(frog),
+    }));
 
+    brainsWithFitness.sort((a, b) => b.fitness - a.fitness);
+
+    const bestBrainsWithFitness = brainsWithFitness.slice(0, TOP_WINNERS_COUNT);
+    console.log("Selecting ", bestBrainsWithFitness.length, "winners");
+    bestBrainsWithFitness.forEach((winner, winnerIndex) =>
+      console.log("\t[", winnerIndex, "] fitness=", winner.fitness),
+    );
+    const bestBrains = bestBrainsWithFitness.map((bf) => bf.brain);
+    const offsprings: Network[] = [];
     //this.fitProxy.fittest = winners[0].gameObject.fitness;
-
     // Keep the top units, and evolve the rest of the population
-    for (let i = winners.length; i < MAX_FROGS; i++) {
+    //console.log("Breeding ...");
+    for (let i = bestBrains.length; i < MAX_FROGS; i++) {
       let offspring;
 
-      if (i == winners.length) {
-        const parentA = winners[0].brain.toJSON();
-        const parentB = winners[1].brain.toJSON();
+      if (i == bestBrains.length) {
+        //console.log("\t[", i, "] Direct crossOver with 2 best ");
+        const parentA = bestBrains[0].toJSON();
+        const parentB = bestBrains[1].toJSON();
         offspring = this.crossOver(parentA, parentB);
       } else if (i < MAX_FROGS - CROSSOVER_WINNER_COUNT) {
         // if within maxUnits - count, crossover between two random winners
-        const parentA = this.getRandomBrain(winners).toJSON();
-        const parentB = this.getRandomBrain(winners).toJSON();
+        //console.log("\t[", i, "] CrossOver with random winners ");
+        const parentA = this.getRandomBrain(bestBrains).toJSON();
+        const parentB = this.getRandomBrain(bestBrains).toJSON();
         offspring = this.crossOver(parentA, parentB);
       } else {
         // clone from a random winner based upon fitness
-        offspring = this.getRandomProbBrain(winners).brain.toJSON();
+        //console.log("\t[", i, "] Clone from a random winner ");
+        offspring = this.getRandomProbBrain(
+          bestBrainsWithFitness,
+        ).brain.toJSON();
       }
 
       // mutate offspring for randomness of evolution
       offspring = this.mutation(offspring);
 
       const newBrain = Network.fromJSON(offspring);
+      newBrain.setOptimize(false);
 
-      this.frogs[i].brain = newBrain;
+      offsprings.push(newBrain);
     }
+    return bestBrains.concat(offsprings);
 
     //this.brains.sort((a, b) => a.index - b.index);
   }
 
   computeFitness(frogContext: FrogContext) {
-    return -frogContext.sprite.y;
-  }
-
-  selection() {
-    // sort by descending order
-    const sortedFrogs = this.frogs.sort(
-      (a, b) => this.computeFitness(b) - this.computeFitness(a),
+    const gameDuration = this.game.getTime() - this.lastResetTimer;
+    const progressionFitness =
+      1 -
+      (Math.max(frogContext.sprite.y, GOAL_LINE_Y) - GOAL_LINE_Y) /
+        (this.playerStartY - GOAL_LINE_Y);
+    const survivalityFitness = frogContext.alive
+      ? 1
+      : (frogContext.timeOfdeath! - this.lastResetTimer) / gameDuration;
+    const fitness = (progressionFitness + survivalityFitness) / 2;
+    console.log(
+      "progressFitness=",
+      progressionFitness,
+      " survavilityFitness=",
+      survivalityFitness,
+      " fitness=",
+      fitness,
     );
 
-    return sortedFrogs.slice(0, TOP_WINNERS_COUNT);
+    return fitness;
   }
 
   crossOver(
@@ -387,10 +419,8 @@ export class Game extends Scene {
   }
 
   resetGame() {
-    this.evolveBrains();
     for (let i = 0; i < MAX_FROGS; i++) {
       const frogContext = this.frogs[i];
-      console.log(this.computeFitness(frogContext));
       if (frogContext.alive) {
         /* if (playerContext.movement) {
                     playerContext.movement.stop()
@@ -398,6 +428,22 @@ export class Game extends Scene {
                 } */
         frogContext.sprite.destroy();
       }
+    }
+    const totalFitness = this.frogs.reduce((acc, cur) => {
+      return acc + this.computeFitness(cur);
+    }, 0);
+    const brains = this.evolveBrains();
+    console.log(
+      "Total fitness=",
+      totalFitness,
+      ", mean fitness: ",
+      totalFitness / MAX_FROGS,
+    );
+    for (let i = 0; i < MAX_FROGS; i++) {
+      const frogContext = this.frogs[i];
+
+      frogContext.brain = brains[i];
+
       const sprite = this.physics.add.sprite(
         this.playerStartX,
         this.playerStartY,
@@ -408,21 +454,35 @@ export class Game extends Scene {
       // Set fixed collision box size (32x32)
       sprite.body.setSize(32, 32);
       frogContext.sprite = sprite;
+      // Set up overlap detection for the new frog
+      this.lanes.forEach((lane, laneIndex) => {
+        for (let i = 0; i < lane.cars.length; i++) {
+          const car = lane.cars[i];
+          this.physics.add.overlap(
+            sprite,
+            car,
+            this.handlePlayerCarCollision,
+            undefined,
+            this,
+          );
+        }
+      });
       frogContext.alive = true;
       this.frogs[i] = frogContext;
       sprite.setData("context", this.frogs[i]);
     }
   }
 
-  killPlayer(player: any) {
-    const playerContext = player.getData("context") as FrogContext;
+  killFrog(frogSprite: any) {
+    const frogContext = frogSprite.getData("context") as FrogContext;
     // Stop any active tweens
-    if (playerContext.movement && playerContext.movement.isActive()) {
-      playerContext.movement.stop();
+    if (frogContext.movement && frogContext.movement.isActive()) {
+      frogContext.movement.stop();
     }
 
-    playerContext.alive = false;
-    player.destroy();
+    frogContext.alive = false;
+    frogContext.timeOfdeath = this.game.getTime();
+    frogSprite.destroy();
   }
 
   updateCars(time: number, delta: number) {
@@ -483,7 +543,7 @@ export class Game extends Scene {
     playerContext.movement = this.tweens.add({
       targets: playerContext.sprite,
       ease: "Cubic", // 'Cubic', 'Elastic', 'Bounce', 'Back'
-      duration: 200,
+      duration: 300,
       ...props,
       onStart: function () {
         playerContext.sprite.anims.play("move", true);
@@ -544,9 +604,9 @@ export class Game extends Scene {
   }
 
   update(time: number, delta: number): void {
-    if (time > this.lastResetTimer + 10000) {
-      this.lastResetTimer = time;
+    if (time > this.lastResetTimer + RESET_TIMER) {
       this.resetGame();
+      this.lastResetTimer = time;
     }
 
     // Update cars
