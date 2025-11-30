@@ -9,8 +9,8 @@ export const GAME_WIDTH = 640;
 
 export const FROG_JUMP_DISTANCE = 20;
 export const FROG_JUMP_SPEED = 100;
-export const FROG_HIT_BOX_X = 15;
-export const FROG_HIT_BOX_Y = 15;
+export const FROG_HIT_BOX_X = 1;
+export const FROG_HIT_BOX_Y = FROG_HIT_BOX_X;
 export const SENSOR_DISTANCE = 45;
 
 export const PLAYER_START_X = 320;
